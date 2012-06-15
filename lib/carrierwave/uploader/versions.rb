@@ -20,20 +20,28 @@ module CarrierWave
           @version_names ||= []
         end
 
+        def version_options
+          @version_options ||= {}
+        end
+
         ##
         # Adds a new version to this uploader
         #
         # === Parameters
         #
         # [name (#to_sym)] name of the version
+        # [options (Hash)] optional options hash
         # [&block (Proc)] a block to eval on this version of the uploader
         #
-        def version(name, &block)
+        def version(name, options = {}, &block)
           name = name.to_sym
           unless versions[name]
             versions[name] = Class.new(self)
             versions[name].version_names.push(*version_names)
             versions[name].version_names.push(name)
+
+            version_options[name] = options
+
             class_eval <<-RUBY
               def #{name}
                 versions[:#{name}]
@@ -120,6 +128,22 @@ module CarrierWave
 
     private
 
+      def active_versions
+        versions.select do |name, uploader|
+          # raise self.class.version_options[name][:if].inspect
+          condition = self.class.version_options[name][:if]
+          if(condition)
+            if(condition.respond_to?(:call))
+              condition.call(self, :version => name, :file => file)
+            else
+              send(condition, file)
+            end
+          else
+            true
+          end
+        end
+      end
+
       def full_filename(for_file)
         [version_name, super(for_file)].compact.join('_')
       end
@@ -129,14 +153,14 @@ module CarrierWave
       end
 
       def cache_versions!(new_file)
-        versions.each do |name, v|
+        active_versions.each do |name, v|
           v.send(:cache_id=, cache_id)
           v.cache!(new_file)
         end
       end
 
       def store_versions!(new_file)
-        versions.each { |name, v| v.store!(new_file) }
+        active_versions.each { |name, v| v.store!(new_file) }
       end
 
       def remove_versions!
